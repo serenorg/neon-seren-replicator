@@ -1,4 +1,4 @@
-# seren-neon-migrator
+# neon-seren-migrator
 
 Zero-downtime database migration tool from Neon to Seren using PostgreSQL logical replication.
 
@@ -35,12 +35,12 @@ The migration process follows 5 phases:
 ### Build from Source
 
 ```bash
-git clone https://github.com/serenorg/seren-neon-migrator.git
-cd seren-neon-migrator
+git clone https://github.com/serenorg/neon-seren-migrator.git
+cd neon-seren-migrator
 cargo build --release
 ```
 
-The binary will be available at `target/release/seren-neon-migrator`.
+The binary will be available at `target/release/neon-seren-migrator`.
 
 ## Usage
 
@@ -49,7 +49,7 @@ The binary will be available at `target/release/seren-neon-migrator`.
 Check that both databases meet migration requirements:
 
 ```bash
-./seren-neon-migrator validate \
+./neon-seren-migrator validate \
   --source "postgresql://user:pass@neon-host:5432/db" \
   --target "postgresql://user:pass@seren-host:5432/db"
 ```
@@ -59,7 +59,7 @@ Check that both databases meet migration requirements:
 Copy initial schema and data:
 
 ```bash
-./seren-neon-migrator init \
+./neon-seren-migrator init \
   --source "postgresql://user:pass@neon-host:5432/db" \
   --target "postgresql://user:pass@seren-host:5432/db"
 ```
@@ -69,7 +69,7 @@ Copy initial schema and data:
 Enable logical replication to sync ongoing changes:
 
 ```bash
-./seren-neon-migrator sync \
+./neon-seren-migrator sync \
   --source "postgresql://user:pass@neon-host:5432/db" \
   --target "postgresql://user:pass@seren-host:5432/db"
 ```
@@ -79,7 +79,7 @@ Enable logical replication to sync ongoing changes:
 Check replication health and lag:
 
 ```bash
-./seren-neon-migrator status \
+./neon-seren-migrator status \
   --source "postgresql://user:pass@neon-host:5432/db" \
   --target "postgresql://user:pass@seren-host:5432/db"
 ```
@@ -89,7 +89,7 @@ Check replication health and lag:
 Validate that all tables match:
 
 ```bash
-./seren-neon-migrator verify \
+./neon-seren-migrator verify \
   --source "postgresql://user:pass@neon-host:5432/db" \
   --target "postgresql://user:pass@seren-host:5432/db"
 ```
@@ -205,7 +205,7 @@ Check status frequently during migration:
 
 ```bash
 # Monitor until lag < 1 second
-watch -n 5 './seren-neon-migrator status --source "$SOURCE" --target "$TARGET"'
+watch -n 5 './neon-seren-migrator status --source "$SOURCE" --target "$TARGET"'
 ```
 
 ## License

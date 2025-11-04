@@ -1,11 +1,11 @@
-// ABOUTME: CLI entry point for seren-neon-migrator
+// ABOUTME: CLI entry point for neon-seren-migrator
 // ABOUTME: Parses commands and routes to appropriate handlers
 
 use clap::{Parser, Subcommand};
-use seren_neon_migrator::commands;
+use neon_seren_migrator::commands;
 
 #[derive(Parser)]
-#[command(name = "seren-neon-migrator")]
+#[command(name = "neon-seren-migrator")]
 #[command(about = "Zero-downtime migration from Neon to Seren", long_about = None)]
 struct Cli {
     #[command(subcommand)]

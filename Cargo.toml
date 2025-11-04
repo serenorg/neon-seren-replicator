@@ -1,5 +1,5 @@
 [package]
-name = "seren-neon-migrator"
+name = "neon-seren-migrator"
 version = "0.1.0"
 edition = "2021"
 

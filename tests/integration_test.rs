@@ -1,7 +1,7 @@
 // ABOUTME: Integration tests for the full migration workflow
 // ABOUTME: Tests all commands end-to-end with real database connections
 
-use seren_neon_migrator::commands;
+use neon_seren_migrator::commands;
 use std::env;
 
 /// Helper to get test database URLs from environment
