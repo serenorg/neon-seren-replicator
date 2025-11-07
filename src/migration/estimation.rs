@@ -160,13 +160,10 @@ async fn estimate_filtered_database_size(
             table.schema, table.name
         );
 
-        let row = client
-            .query_one(&query, &[])
-            .await
-            .context(format!(
-                "Failed to query size for table '{}.{}'",
-                table.schema, table.name
-            ))?;
+        let row = client.query_one(&query, &[]).await.context(format!(
+            "Failed to query size for table '{}.{}'",
+            table.schema, table.name
+        ))?;
 
         let table_size: i64 = row.get(0);
         total_size += table_size;
