@@ -89,34 +89,21 @@ jobs:
 
           # Generate release notes
           cat > release-notes.md << 'EOF'
-          ## ✨ Feature Release: v2.1.0
+          ## 🔧 Patch Release: v2.1.1
 
-          This minor release enhances the interactive mode with advanced table-level filtering capabilities.
+          This patch release improves the clarity of interactive prompts to prevent user confusion.
 
-          ### 🎯 New Features
+          ### 🐛 Bug Fixes
 
-          **Enhanced Interactive Mode (Issue #111)**
-          - Added schema-only table selection - replicate DDL only, skip data
-          - Added time-based filter configuration - replicate recent data (e.g., last 2 months)
-          - Interactive prompts for timestamp column and time window selection
-          - Enhanced summary display showing all configuration options with visual indicators (📋 schema-only, 🕒 time filters)
-
-          ### 🔧 Improvements
-
-          - Users can now configure advanced filtering without CLI flags or TOML config files
-          - Guided interactive workflow for column name and time period selection
-          - Default values provided (created_at, 2 months) for faster configuration
-          - Complete configuration summary before confirmation
+          **Improved Time Filter Prompts**
+          - Changed "Timestamp column name" to "Column containing timestamps (e.g., created_at, updated_at)"
+          - Changed "Time window" to "How far back to replicate data (e.g., '2 months', '90 days', '1 year')"
+          - Prevents users from accidentally swapping column name with time period
+          - Fixes validation errors caused by entering time periods as column names
 
           ### Impact
 
-          This release makes advanced replication features accessible through the interactive UI. Users no longer need to learn CLI syntax or TOML format to configure schema-only replication or time-based filters.
-
-          ### Example Use Cases
-
-          - **Schema-only replication**: Replicate table structures for large tables without copying data
-          - **Recent data only**: Replicate last N days/months of data for analytics or staging environments
-          - **Compliance**: Exclude old data while maintaining recent records
+          Users were getting confused by the previous prompt text and entering time periods (like "2 months") in the column name field, causing identifier validation errors. The new prompts make it explicit what type of value is expected for each input.
 
           ### Installation
 
@@ -135,13 +122,9 @@ jobs:
 
           ### Upgrade Recommendation
 
-          All users benefit from this release - the enhanced interactive mode improves usability for selective replication scenarios.
+          Recommended for users who use interactive mode with time-based filters. The improved prompts prevent common input mistakes.
 
-          ### Resolved Issues
-
-          - #111: Interactive mode doesn't support schema-only and time filter rules
-
-          **Full Changelog**: https://github.com/serenorg/postgres-seren-replicator/compare/v2.0.1...${VERSION}
+          **Full Changelog**: https://github.com/serenorg/postgres-seren-replicator/compare/v2.1.0...${VERSION}
           EOF
 
           # Create release with all binaries
