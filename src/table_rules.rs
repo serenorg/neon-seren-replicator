@@ -7,6 +7,117 @@ use anyhow::{anyhow, bail, Context, Result};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// Represents a fully-qualified table identifier with optional database and schema
+/// Supports parsing from: `database.schema.table`, `schema.table`, or `table`
+/// Defaults to `public` schema for backward compatibility
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct QualifiedTable {
+    pub database: Option<String>,
+    pub schema: String,
+    pub table: String,
+}
+
+impl QualifiedTable {
+    /// Parse a table specification from CLI or config
+    /// Formats: `database.schema.table`, `schema.table`, or `table`
+    /// Defaults to `public` schema if not specified
+    pub fn parse(spec: &str) -> Result<Self> {
+        let trimmed = spec.trim();
+        if trimmed.is_empty() {
+            bail!("Table specification cannot be empty");
+        }
+
+        let parts: Vec<&str> = trimmed.split('.').collect();
+        match parts.len() {
+            1 => {
+                // Just table name: defaults to public schema, no database
+                let table = non_empty(parts[0], "table")?;
+                utils::validate_postgres_identifier(&table)?;
+                Ok(QualifiedTable {
+                    database: None,
+                    schema: "public".to_string(),
+                    table,
+                })
+            }
+            2 => {
+                // schema.table OR database.table
+                // We treat as schema.table for consistency
+                // Can be disambiguated later if database is provided separately
+                let first = non_empty(parts[0], "schema")?;
+                let second = non_empty(parts[1], "table")?;
+                utils::validate_postgres_identifier(&first)?;
+                utils::validate_postgres_identifier(&second)?;
+                Ok(QualifiedTable {
+                    database: None,
+                    schema: first,
+                    table: second,
+                })
+            }
+            3 => {
+                // database.schema.table
+                let database = non_empty(parts[0], "database")?;
+                let schema = non_empty(parts[1], "schema")?;
+                let table = non_empty(parts[2], "table")?;
+                utils::validate_postgres_identifier(&database)?;
+                utils::validate_postgres_identifier(&schema)?;
+                utils::validate_postgres_identifier(&table)?;
+                Ok(QualifiedTable {
+                    database: Some(database),
+                    schema,
+                    table,
+                })
+            }
+            _ => bail!(
+                "Invalid table specification '{}': must be 'table', 'schema.table', or 'database.schema.table'",
+                spec
+            ),
+        }
+    }
+
+    /// Create from explicit database, schema, and table names
+    pub fn new(database: Option<String>, schema: String, table: String) -> Self {
+        QualifiedTable {
+            database,
+            schema,
+            table,
+        }
+    }
+
+    /// Set the database if not already set (for resolving ambiguous 2-part names)
+    pub fn with_database(mut self, database: Option<String>) -> Self {
+        if self.database.is_none() {
+            self.database = database;
+        }
+        self
+    }
+
+    /// Get the schema-qualified table name (schema.table)
+    pub fn schema_qualified(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.table))
+    }
+
+    /// Get the fully-qualified name if database is present
+    pub fn fully_qualified(&self) -> String {
+        match &self.database {
+            Some(db) => format!(
+                "{}.{}.{}",
+                quote_ident(db),
+                quote_ident(&self.schema),
+                quote_ident(&self.table)
+            ),
+            None => self.schema_qualified(),
+        }
+    }
+
+    /// Check if this matches a given database
+    pub fn matches_database(&self, database: &str) -> bool {
+        match &self.database {
+            Some(db) => db == database,
+            None => true, // No database specified means it applies to all databases
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimeFilterRule {
     pub column: String,
@@ -453,6 +564,124 @@ fn hash_scope_label(hasher: &mut Sha256, scope: &ScopeKey) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // QualifiedTable tests
+    #[test]
+    fn test_qualified_table_parse_single_part() {
+        // Single part defaults to public schema
+        let t = QualifiedTable::parse("users").unwrap();
+        assert_eq!(t.database, None);
+        assert_eq!(t.schema, "public");
+        assert_eq!(t.table, "users");
+    }
+
+    #[test]
+    fn test_qualified_table_parse_two_parts() {
+        // Two parts is schema.table
+        let t = QualifiedTable::parse("analytics.orders").unwrap();
+        assert_eq!(t.database, None);
+        assert_eq!(t.schema, "analytics");
+        assert_eq!(t.table, "orders");
+    }
+
+    #[test]
+    fn test_qualified_table_parse_three_parts() {
+        // Three parts is database.schema.table
+        let t = QualifiedTable::parse("db1.public.users").unwrap();
+        assert_eq!(t.database, Some("db1".to_string()));
+        assert_eq!(t.schema, "public");
+        assert_eq!(t.table, "users");
+    }
+
+    #[test]
+    fn test_qualified_table_parse_empty() {
+        let result = QualifiedTable::parse("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_qualified_table_parse_whitespace() {
+        let result = QualifiedTable::parse("   ");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_qualified_table_parse_too_many_parts() {
+        let result = QualifiedTable::parse("a.b.c.d");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("must be"));
+    }
+
+    #[test]
+    fn test_qualified_table_schema_qualified() {
+        let t = QualifiedTable::new(None, "analytics".into(), "orders".into());
+        assert_eq!(t.schema_qualified(), "\"analytics\".\"orders\"");
+    }
+
+    #[test]
+    fn test_qualified_table_fully_qualified_with_database() {
+        let t = QualifiedTable::new(Some("db1".into()), "public".into(), "users".into());
+        assert_eq!(t.fully_qualified(), "\"db1\".\"public\".\"users\"");
+    }
+
+    #[test]
+    fn test_qualified_table_fully_qualified_without_database() {
+        let t = QualifiedTable::new(None, "analytics".into(), "orders".into());
+        assert_eq!(t.fully_qualified(), "\"analytics\".\"orders\"");
+    }
+
+    #[test]
+    fn test_qualified_table_with_database() {
+        let t = QualifiedTable::parse("analytics.orders").unwrap()
+            .with_database(Some("db1".to_string()));
+        assert_eq!(t.database, Some("db1".to_string()));
+        assert_eq!(t.schema, "analytics");
+        assert_eq!(t.table, "orders");
+    }
+
+    #[test]
+    fn test_qualified_table_with_database_no_override() {
+        let t = QualifiedTable::parse("db1.analytics.orders").unwrap()
+            .with_database(Some("db2".to_string()));
+        // Should not override existing database
+        assert_eq!(t.database, Some("db1".to_string()));
+    }
+
+    #[test]
+    fn test_qualified_table_matches_database() {
+        let t = QualifiedTable::new(Some("db1".into()), "public".into(), "users".into());
+        assert!(t.matches_database("db1"));
+        assert!(!t.matches_database("db2"));
+    }
+
+    #[test]
+    fn test_qualified_table_matches_database_no_database() {
+        let t = QualifiedTable::new(None, "public".into(), "users".into());
+        // No database specified means matches all
+        assert!(t.matches_database("db1"));
+        assert!(t.matches_database("db2"));
+        assert!(t.matches_database("any_db"));
+    }
+
+    #[test]
+    fn test_qualified_table_new() {
+        let t = QualifiedTable::new(Some("db1".into()), "analytics".into(), "metrics".into());
+        assert_eq!(t.database, Some("db1".to_string()));
+        assert_eq!(t.schema, "analytics");
+        assert_eq!(t.table, "metrics");
+    }
+
+    #[test]
+    fn test_qualified_table_ordering() {
+        let t1 = QualifiedTable::new(None, "analytics".into(), "orders".into());
+        let t2 = QualifiedTable::new(None, "public".into(), "users".into());
+        let t3 = QualifiedTable::new(None, "analytics".into(), "metrics".into());
+
+        // Should be comparable and orderable
+        assert!(t1 < t2);  // analytics < public
+        assert!(t3 < t1);  // metrics < orders
+    }
 
     #[test]
     fn cli_schema_only_parsing() {
