@@ -586,6 +586,38 @@ Check status frequently during replication:
 watch -n 5 './postgres-seren-replicator status --source "$SOURCE" --target "$TARGET"'
 ```
 
+### "FK-related table will be truncated but is NOT being copied"
+
+When using filtered snapshots (table-level WHERE clauses or time filters), tables with foreign key relationships are truncated using `TRUNCATE CASCADE` to handle dependencies. This error means a dependent table would lose data because it's not included in your replication scope.
+
+**Problem:** You're replicating a filtered table that has foreign key relationships, but some of the FK-related tables are not being copied. TRUNCATE CASCADE would delete data from those tables.
+
+**Solution:** Include all FK-related tables in your replication scope:
+
+```bash
+# If you're filtering orders, also include users table
+postgres-seren-replicator init \
+  --source "$SOURCE" \
+  --target "$TARGET" \
+  --config replication.toml  # Include all FK-related tables
+```
+
+Example config with FK-related tables:
+```toml
+[databases.mydb]
+
+[[databases.mydb.table_filters]]
+table = "orders"
+where = "created_at > NOW() - INTERVAL '90 days'"
+
+# Must also include users since orders references users(id)
+[[databases.mydb.table_filters]]
+table = "users"
+where = "id IN (SELECT user_id FROM orders WHERE created_at > NOW() - INTERVAL '90 days')"
+```
+
+**Alternative:** If you don't want to replicate the related tables, remove the foreign key constraint before replication.
+
 ## License
 
 This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
