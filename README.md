@@ -267,6 +267,90 @@ Large migrations often need different rules per database. Describe them in TOML 
 
 See [docs/replication-config.md](docs/replication-config.md) for the full schema (schema-only lists, table filters, time filters, and TimescaleDB tips). CLI flags merge on top of the file so you can override a single table without editing the config.
 
+### Schema-Aware Filtering
+
+PostgreSQL databases can have multiple schemas (namespaces) with identically-named tables. For example, both `public.orders` and `analytics.orders` can exist in the same database. Schema-aware filtering lets you target specific schema.table combinations to avoid ambiguity.
+
+#### Using Schema Notation
+
+**CLI with dot notation:**
+
+```bash
+# Include tables from specific schemas
+./postgres-seren-replicator init \
+  --source "$SRC" \
+  --target "$TGT" \
+  --schema-only-tables "analytics.large_table,public.temp"
+
+# Filter tables in non-public schemas
+./postgres-seren-replicator init \
+  --source "$SRC" \
+  --target "$TGT" \
+  --table-filter "analytics.events:created_at > NOW() - INTERVAL '90 days'" \
+  --table-filter "reporting.metrics:status = 'active'"
+
+# Time filters with schema qualification
+./postgres-seren-replicator init \
+  --source "$SRC" \
+  --target "$TGT" \
+  --time-filter "analytics.metrics:timestamp:6 months"
+```
+
+**TOML config with explicit schema field:**
+
+```toml
+[databases.mydb]
+
+# Schema-only tables (structure but no data)
+schema_only = [
+  "analytics.evmlog_strides",  # Dot notation
+  "reporting.archive"
+]
+
+# Table filters with explicit schema field
+[[databases.mydb.table_filters]]
+table = "events"
+schema = "analytics"
+where = "created_at > NOW() - INTERVAL '90 days'"
+
+# Alternatively, use dot notation in table name
+[[databases.mydb.table_filters]]
+table = "reporting.metrics"
+where = "status = 'active'"
+
+# Time filters with schema
+[[databases.mydb.time_filters]]
+table = "metrics"
+schema = "analytics"
+column = "timestamp"
+last = "6 months"
+```
+
+#### Backward Compatibility
+
+For convenience, table names without a schema qualifier default to the `public` schema:
+
+```bash
+# These are equivalent:
+--schema-only-tables "users"
+--schema-only-tables "public.users"
+
+# TOML equivalent:
+schema_only = ["users"]              # Defaults to public schema
+schema_only = ["public.users"]       # Explicit public schema
+```
+
+This means existing configurations continue to work without modification.
+
+#### Why Schema Awareness Matters
+
+Without schema qualification, filtering `"orders"` is ambiguous if you have both `public.orders` and `analytics.orders`. Schema-aware filtering ensures:
+
+- **Precise targeting**: Replicate `analytics.orders` while excluding `public.orders`
+- **No collisions**: Different schemas can have identically-named tables
+- **FK safety**: Cascading truncates handle schema-qualified FK relationships correctly
+- **Resume correctness**: Checkpoints detect schema scope changes and invalidate when the replication scope shifts
+
 ### Filtering with Other Commands
 
 Filtering works with all commands that support it:

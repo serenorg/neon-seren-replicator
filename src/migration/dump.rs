@@ -303,7 +303,10 @@ mod tests {
 
         let tables = get_excluded_tables_for_db(&filter, "db1").unwrap();
         // Should return schema-qualified names
-        assert_eq!(tables, vec!["\"public\".\"table1\"", "\"public\".\"table2\""]);
+        assert_eq!(
+            tables,
+            vec!["\"public\".\"table1\"", "\"public\".\"table2\""]
+        );
 
         let tables = get_excluded_tables_for_db(&filter, "db2").unwrap();
         assert_eq!(tables, vec!["\"public\".\"table3\""]);
@@ -328,7 +331,10 @@ mod tests {
 
         let tables = get_included_tables_for_db(&filter, "db1").unwrap();
         // Should return schema-qualified names in original order
-        assert_eq!(tables, vec!["\"public\".\"users\"", "\"public\".\"orders\""]);
+        assert_eq!(
+            tables,
+            vec!["\"public\".\"users\"", "\"public\".\"orders\""]
+        );
 
         let tables = get_included_tables_for_db(&filter, "db2").unwrap();
         assert_eq!(tables, vec!["\"public\".\"products\""]);
