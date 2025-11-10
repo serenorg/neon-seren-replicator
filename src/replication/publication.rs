@@ -76,7 +76,7 @@ pub async fn create_publication(
 
         let fq_table = format!("\"{}\".\"{}\"", table.schema, table.name);
 
-        match filter.table_rules().rule_for_table(db_name, &table.name) {
+        match filter.table_rules().rule_for_table(db_name, &table.schema, &table.name) {
             Some(TableRuleKind::SchemaOnly) => {
                 tracing::debug!(
                     "Excluding table '{}' from publication (schema-only)",

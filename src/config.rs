@@ -1,7 +1,7 @@
 // ABOUTME: Parses replication configuration files for table-level rules
 // ABOUTME: Converts TOML format into TableRules structures
 
-use crate::table_rules::TableRules;
+use crate::table_rules::{QualifiedTable, TableRules};
 use anyhow::{Context, Result};
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -46,18 +46,16 @@ pub fn load_table_rules_from_file(path: &str) -> Result<TableRules> {
     let mut rules = TableRules::default();
     for (db_name, db) in parsed.databases {
         for table in db.schema_only {
-            rules.add_schema_only_table(Some(db_name.clone()), table)?;
+            let qualified = QualifiedTable::parse(&table)?.with_database(Some(db_name.clone()));
+            rules.add_schema_only_table(qualified)?;
         }
         for filter in db.table_filters {
-            rules.add_table_filter(Some(db_name.clone()), filter.table, filter.predicate)?;
+            let qualified = QualifiedTable::parse(&filter.table)?.with_database(Some(db_name.clone()));
+            rules.add_table_filter(qualified, filter.predicate)?;
         }
         for filter in db.time_filters {
-            rules.add_time_filter(
-                Some(db_name.clone()),
-                filter.table,
-                filter.column,
-                filter.last,
-            )?;
+            let qualified = QualifiedTable::parse(&filter.table)?.with_database(Some(db_name.clone()));
+            rules.add_time_filter(qualified, filter.column, filter.last)?;
         }
     }
 
@@ -91,9 +89,9 @@ mod tests {
         let rules = load_table_rules_from_file(tmp.path().to_str().unwrap()).unwrap();
         assert_eq!(
             rules.schema_only_tables("kong"),
-            vec!["evmlog_strides", "price"]
+            vec!["\"public\".\"evmlog_strides\"", "\"public\".\"price\""]
         );
-        assert!(rules.table_filter("kong", "output").is_some());
-        assert!(rules.time_filter("kong", "metrics").is_some());
+        assert!(rules.table_filter("kong", "public", "output").is_some());
+        assert!(rules.time_filter("kong", "public", "metrics").is_some());
     }
 }

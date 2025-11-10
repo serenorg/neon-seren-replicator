@@ -118,6 +118,37 @@ impl QualifiedTable {
     }
 }
 
+/// Internal key for storing table rules with schema information
+/// Used to distinguish tables with the same name in different schemas
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+struct SchemaTableKey {
+    schema: String,
+    table: String,
+}
+
+impl SchemaTableKey {
+    /// Create from a QualifiedTable
+    fn from_qualified(qualified: &QualifiedTable) -> Self {
+        SchemaTableKey {
+            schema: qualified.schema.clone(),
+            table: qualified.table.clone(),
+        }
+    }
+
+    /// Create from parts, defaulting to 'public' schema if not specified
+    fn from_parts(schema: Option<&str>, table: &str) -> Self {
+        SchemaTableKey {
+            schema: schema.unwrap_or("public").to_string(),
+            table: table.to_string(),
+        }
+    }
+
+    /// Get the schema-qualified table name (schema.table)
+    fn schema_qualified(&self) -> String {
+        format!("{}.{}", quote_ident(&self.schema), quote_ident(&self.table))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TimeFilterRule {
     pub column: String,
@@ -147,8 +178,8 @@ pub struct TableRules {
     time_filters: ScopedTableMap<TimeFilterRule>,
 }
 
-type ScopedTableSet = BTreeMap<ScopeKey, BTreeSet<String>>;
-type ScopedTableMap<V> = BTreeMap<ScopeKey, BTreeMap<String, V>>;
+type ScopedTableSet = BTreeMap<ScopeKey, BTreeSet<SchemaTableKey>>;
+type ScopedTableMap<V> = BTreeMap<ScopeKey, BTreeMap<SchemaTableKey, V>>;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum ScopeKey {
@@ -170,87 +201,67 @@ impl ScopeKey {
 }
 
 impl TableRules {
-    pub fn add_schema_only_table(&mut self, database: Option<String>, table: String) -> Result<()> {
-        if let Some(ref db) = database {
-            utils::validate_postgres_identifier(db)?;
-        }
-        utils::validate_postgres_identifier(&table)?;
-        self.schema_only
-            .entry(ScopeKey::from_option(database))
-            .or_default()
-            .insert(table);
+    pub fn add_schema_only_table(&mut self, qualified: QualifiedTable) -> Result<()> {
+        let scope = ScopeKey::from_option(qualified.database.clone());
+        let key = SchemaTableKey::from_qualified(&qualified);
+        self.schema_only.entry(scope).or_default().insert(key);
         Ok(())
     }
 
     pub fn add_table_filter(
         &mut self,
-        database: Option<String>,
-        table: String,
+        qualified: QualifiedTable,
         predicate: String,
     ) -> Result<()> {
-        if let Some(ref db) = database {
-            utils::validate_postgres_identifier(db)?;
-        }
-        utils::validate_postgres_identifier(&table)?;
         if predicate.trim().is_empty() {
-            bail!("Table filter predicate cannot be empty for '{}'", table);
+            bail!(
+                "Table filter predicate cannot be empty for '{}'",
+                qualified.schema_qualified()
+            );
         }
-        let scope = ScopeKey::from_option(database.clone());
-        ensure_schema_only_free(
-            &self.schema_only,
-            database.as_deref(),
-            &table,
-            "table filter",
-        )?;
+        let scope = ScopeKey::from_option(qualified.database.clone());
+        let key = SchemaTableKey::from_qualified(&qualified);
+        ensure_schema_only_free(&self.schema_only, &qualified, "table filter")?;
         self.table_filters
             .entry(scope)
             .or_default()
-            .insert(table, predicate);
+            .insert(key, predicate);
         Ok(())
     }
 
     pub fn add_time_filter(
         &mut self,
-        database: Option<String>,
-        table: String,
+        qualified: QualifiedTable,
         column: String,
         window: String,
     ) -> Result<()> {
-        if let Some(ref db) = database {
-            utils::validate_postgres_identifier(db)?;
-        }
-        utils::validate_postgres_identifier(&table)?;
         utils::validate_postgres_identifier(&column)?;
         let interval = normalize_time_window(&window)?;
-        let scope = ScopeKey::from_option(database.clone());
-        ensure_schema_only_free(
-            &self.schema_only,
-            database.as_deref(),
-            &table,
-            "time filter",
-        )?;
+        let scope = ScopeKey::from_option(qualified.database.clone());
+        let key = SchemaTableKey::from_qualified(&qualified);
+        ensure_schema_only_free(&self.schema_only, &qualified, "time filter")?;
         if self
             .table_filters
             .get(&scope)
-            .and_then(|inner| inner.get(&table))
+            .and_then(|inner| inner.get(&key))
             .is_some()
         {
             bail!(
                 "Cannot apply time filter to table '{}' because a table filter already exists",
-                table
+                qualified.schema_qualified()
             );
         }
         self.time_filters
             .entry(scope)
             .or_default()
-            .insert(table, TimeFilterRule { column, interval });
+            .insert(key, TimeFilterRule { column, interval });
         Ok(())
     }
 
     pub fn apply_schema_only_cli(&mut self, specs: &[String]) -> Result<()> {
         for spec in specs {
-            let (database, table) = parse_table_spec(spec)?;
-            self.add_schema_only_table(database, table)?;
+            let qualified = QualifiedTable::parse(spec)?;
+            self.add_schema_only_table(qualified)?;
         }
         Ok(())
     }
@@ -263,8 +274,8 @@ impl TableRules {
             if predicate.trim().is_empty() {
                 bail!("Table filter '{}' must include a predicate after ':'", spec);
             }
-            let (database, table) = parse_table_spec(table_part)?;
-            self.add_table_filter(database, table, predicate.trim().to_string())?;
+            let qualified = QualifiedTable::parse(table_part)?;
+            self.add_table_filter(qualified, predicate.trim().to_string())?;
         }
         Ok(())
     }
@@ -283,13 +294,8 @@ impl TableRules {
                     spec
                 );
             }
-            let (database, table) = parse_table_spec(table_part)?;
-            self.add_time_filter(
-                database,
-                table,
-                column.trim().to_string(),
-                window.trim().to_string(),
-            )?;
+            let qualified = QualifiedTable::parse(table_part)?;
+            self.add_time_filter(qualified, column.trim().to_string(), window.trim().to_string())?;
         }
         Ok(())
     }
@@ -298,12 +304,12 @@ impl TableRules {
         collect_tables(&self.schema_only, database)
     }
 
-    pub fn table_filter(&self, database: &str, table: &str) -> Option<&String> {
-        lookup_scoped(&self.table_filters, database, table)
+    pub fn table_filter(&self, database: &str, schema: &str, table: &str) -> Option<&String> {
+        lookup_scoped(&self.table_filters, database, schema, table)
     }
 
-    pub fn time_filter(&self, database: &str, table: &str) -> Option<&TimeFilterRule> {
-        lookup_scoped(&self.time_filters, database, table)
+    pub fn time_filter(&self, database: &str, schema: &str, table: &str) -> Option<&TimeFilterRule> {
+        lookup_scoped(&self.time_filters, database, schema, table)
     }
 
     pub fn predicate_tables(&self, database: &str) -> Vec<(String, String)> {
@@ -327,14 +333,14 @@ impl TableRules {
         combined.into_iter().collect()
     }
 
-    pub fn rule_for_table(&self, database: &str, table: &str) -> Option<TableRuleKind> {
-        if has_schema_only_rule(&self.schema_only, database, table) {
+    pub fn rule_for_table(&self, database: &str, schema: &str, table: &str) -> Option<TableRuleKind> {
+        if has_schema_only_rule(&self.schema_only, database, schema, table) {
             return Some(TableRuleKind::SchemaOnly);
         }
-        if let Some(predicate) = self.table_filter(database, table) {
+        if let Some(predicate) = self.table_filter(database, schema, table) {
             return Some(TableRuleKind::Predicate(predicate.clone()));
         }
-        if let Some(rule) = self.time_filter(database, table) {
+        if let Some(rule) = self.time_filter(database, schema, table) {
             return Some(TableRuleKind::Predicate(rule.predicate()));
         }
         None
@@ -361,27 +367,6 @@ impl TableRules {
     }
 }
 
-fn parse_table_spec(input: &str) -> Result<(Option<String>, String)> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        bail!("Table specification cannot be empty");
-    }
-
-    let (database, table) = if let Some((db, tbl)) = trimmed.split_once('.') {
-        let db_name = non_empty(db, "database")?;
-        utils::validate_postgres_identifier(&db_name)?;
-        let table_name = non_empty(tbl, "table")?;
-        utils::validate_postgres_identifier(&table_name)?;
-        (Some(db_name), table_name)
-    } else {
-        let table_name = non_empty(trimmed, "table")?;
-        utils::validate_postgres_identifier(&table_name)?;
-        (None, table_name)
-    };
-
-    Ok((database, table))
-}
-
 fn non_empty(value: &str, label: &str) -> Result<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -393,74 +378,82 @@ fn non_empty(value: &str, label: &str) -> Result<String> {
 fn collect_tables(map: &ScopedTableSet, database: &str) -> Vec<String> {
     let mut tables = BTreeSet::new();
     if let Some(global) = map.get(&ScopeKey::Global) {
-        tables.extend(global.iter().cloned());
+        for key in global {
+            tables.insert(key.schema_qualified());
+        }
     }
     let scoped = ScopeKey::database(database);
     if let Some(specific) = map.get(&scoped) {
-        tables.extend(specific.iter().cloned());
+        for key in specific {
+            tables.insert(key.schema_qualified());
+        }
     }
     tables.into_iter().collect()
 }
 
-fn lookup_scoped<'a, V>(map: &'a ScopedTableMap<V>, database: &str, table: &str) -> Option<&'a V> {
+fn lookup_scoped<'a, V>(
+    map: &'a ScopedTableMap<V>,
+    database: &str,
+    schema: &str,
+    table: &str,
+) -> Option<&'a V> {
+    let key = SchemaTableKey::from_parts(Some(schema), table);
     let scoped = ScopeKey::database(database);
     map.get(&scoped)
-        .and_then(|inner| inner.get(table))
-        .or_else(|| {
-            map.get(&ScopeKey::Global)
-                .and_then(|inner| inner.get(table))
-        })
+        .and_then(|inner| inner.get(&key))
+        .or_else(|| map.get(&ScopeKey::Global).and_then(|inner| inner.get(&key)))
 }
 
 fn scoped_map_values<V: Clone>(map: &ScopedTableMap<V>, database: &str) -> BTreeMap<String, V> {
     let mut values = BTreeMap::new();
     if let Some(global) = map.get(&ScopeKey::Global) {
-        for (table, value) in global {
-            values.insert(table.clone(), value.clone());
+        for (key, value) in global {
+            values.insert(key.schema_qualified(), value.clone());
         }
     }
     if let Some(specific) = map.get(&ScopeKey::database(database)) {
-        for (table, value) in specific {
-            values.insert(table.clone(), value.clone());
+        for (key, value) in specific {
+            values.insert(key.schema_qualified(), value.clone());
         }
     }
     values
 }
 
-fn has_schema_only_rule(schema_only: &ScopedTableSet, database: &str, table: &str) -> bool {
+fn has_schema_only_rule(schema_only: &ScopedTableSet, database: &str, schema: &str, table: &str) -> bool {
+    let key = SchemaTableKey::from_parts(Some(schema), table);
     schema_only
         .get(&ScopeKey::Global)
-        .is_some_and(|set| set.contains(table))
+        .is_some_and(|set| set.contains(&key))
         || schema_only
             .get(&ScopeKey::database(database))
-            .is_some_and(|set| set.contains(table))
+            .is_some_and(|set| set.contains(&key))
 }
 
 fn ensure_schema_only_free(
     schema_only: &ScopedTableSet,
-    database: Option<&str>,
-    table: &str,
+    qualified: &QualifiedTable,
     rule_name: &str,
 ) -> Result<()> {
+    let key = SchemaTableKey::from_qualified(qualified);
     if schema_only
         .get(&ScopeKey::Global)
-        .is_some_and(|set| set.contains(table))
+        .is_some_and(|set| set.contains(&key))
     {
         bail!(
             "Cannot apply {} to table '{}' because it is marked schema-only globally",
             rule_name,
-            table
+            qualified.schema_qualified()
         );
     }
-    if let Some(db) = database {
+    if let Some(db) = &qualified.database {
         if schema_only
             .get(&ScopeKey::database(db))
-            .is_some_and(|set| set.contains(table))
+            .is_some_and(|set| set.contains(&key))
         {
             bail!(
                 "Cannot apply {} to table '{}' in database '{}' because it is schema-only",
                 rule_name,
-                table,
+                qualified.schema_qualified(),
                 db
             );
         }
@@ -526,8 +519,10 @@ fn merge_maps<V: Clone>(target: &mut ScopedTableMap<V>, source: ScopedTableMap<V
 fn hash_scoped_set(hasher: &mut Sha256, data: &ScopedTableSet) {
     for (scope, tables) in data {
         hash_scope_label(hasher, scope);
-        for table in tables {
-            hasher.update(table.as_bytes());
+        for key in tables {
+            hasher.update(key.schema.as_bytes());
+            hasher.update(b".");
+            hasher.update(key.table.as_bytes());
             hasher.update(b"|");
         }
     }
@@ -539,8 +534,10 @@ where
 {
     for (scope, tables) in data {
         hash_scope_label(hasher, scope);
-        for (table, value) in tables {
-            hasher.update(table.as_bytes());
+        for (key, value) in tables {
+            hasher.update(key.schema.as_bytes());
+            hasher.update(b".");
+            hasher.update(key.table.as_bytes());
             hasher.update(b"=");
             hasher.update(encode(value).as_bytes());
             hasher.update(b"|");
@@ -633,7 +630,8 @@ mod tests {
 
     #[test]
     fn test_qualified_table_with_database() {
-        let t = QualifiedTable::parse("analytics.orders").unwrap()
+        let t = QualifiedTable::parse("analytics.orders")
+            .unwrap()
             .with_database(Some("db1".to_string()));
         assert_eq!(t.database, Some("db1".to_string()));
         assert_eq!(t.schema, "analytics");
@@ -642,7 +640,8 @@ mod tests {
 
     #[test]
     fn test_qualified_table_with_database_no_override() {
-        let t = QualifiedTable::parse("db1.analytics.orders").unwrap()
+        let t = QualifiedTable::parse("db1.analytics.orders")
+            .unwrap()
             .with_database(Some("db2".to_string()));
         // Should not override existing database
         assert_eq!(t.database, Some("db1".to_string()));
@@ -679,28 +678,33 @@ mod tests {
         let t3 = QualifiedTable::new(None, "analytics".into(), "metrics".into());
 
         // Should be comparable and orderable
-        assert!(t1 < t2);  // analytics < public
-        assert!(t3 < t1);  // metrics < orders
+        assert!(t1 < t2); // analytics < public
+        assert!(t3 < t1); // metrics < orders
     }
 
     #[test]
     fn cli_schema_only_parsing() {
         let mut rules = TableRules::default();
+        // "db1.orders" is parsed as schema=db1, table=orders (not database.table!)
+        // "invoices" is parsed as schema=public, table=invoices
         rules
-            .apply_schema_only_cli(&["db1.orders".to_string(), "invoices".to_string()])
+            .apply_schema_only_cli(&["analytics.orders".to_string(), "invoices".to_string()])
             .unwrap();
-        assert_eq!(rules.schema_only_tables("db1"), vec!["invoices", "orders"]);
-        assert_eq!(rules.schema_only_tables("db2"), vec!["invoices"]);
+        let tables = rules.schema_only_tables("anydb");
+        // Both are global scope (no database specified), so they apply to all databases
+        assert!(tables.contains(&"\"analytics\".\"orders\"".to_string()));
+        assert!(tables.contains(&"\"public\".\"invoices\"".to_string()));
     }
 
     #[test]
     fn cli_table_filter_parsing() {
         let mut rules = TableRules::default();
+        // "analytics.logs" is parsed as schema=analytics, table=logs
         rules
-            .apply_table_filter_cli(&["db1.logs:created_at > NOW() - INTERVAL '1 day'".into()])
+            .apply_table_filter_cli(&["analytics.logs:created_at > NOW() - INTERVAL '1 day'".into()])
             .unwrap();
         assert!(rules
-            .table_filter("db1", "logs")
+            .table_filter("anydb", "analytics", "logs")
             .unwrap()
             .contains("created_at"));
     }
@@ -711,7 +715,7 @@ mod tests {
         rules
             .apply_time_filter_cli(&["metrics:created_at:6 months".into()])
             .unwrap();
-        let tf = rules.time_filter("any", "metrics").unwrap();
+        let tf = rules.time_filter("any", "public", "metrics").unwrap();
         assert_eq!(tf.column, "created_at");
         assert_eq!(tf.interval, "6 month");
     }
