@@ -197,18 +197,23 @@ pub async fn dump_data(
 }
 
 /// Extract table names for a specific database from exclude_tables filter
+/// Returns schema-qualified names in format: "schema"."table"
 fn get_excluded_tables_for_db(filter: &ReplicationFilter, db_name: &str) -> Option<Vec<String>> {
     let mut tables = BTreeSet::new();
 
+    // Handle explicit exclude_tables (format: "database.table")
+    // Default to public schema for backward compatibility
     if let Some(explicit) = filter.exclude_tables() {
         for full_name in explicit {
             let parts: Vec<&str> = full_name.split('.').collect();
             if parts.len() == 2 && parts[0] == db_name {
-                tables.insert(parts[1].to_string());
+                // Format as "public"."table" for consistency
+                tables.insert(format!("\"public\".\"{}\"", parts[1]));
             }
         }
     }
 
+    // schema_only_tables and predicate_tables already return schema-qualified names
     for table in filter.schema_only_tables(db_name) {
         tables.insert(table);
     }
@@ -225,6 +230,7 @@ fn get_excluded_tables_for_db(filter: &ReplicationFilter, db_name: &str) -> Opti
 }
 
 /// Extract table names for a specific database from include_tables filter
+/// Returns schema-qualified names in format: "schema"."table"
 fn get_included_tables_for_db(filter: &ReplicationFilter, db_name: &str) -> Option<Vec<String>> {
     filter.include_tables().map(|tables| {
         tables
@@ -232,7 +238,8 @@ fn get_included_tables_for_db(filter: &ReplicationFilter, db_name: &str) -> Opti
             .filter_map(|full_name| {
                 let parts: Vec<&str> = full_name.split('.').collect();
                 if parts.len() == 2 && parts[0] == db_name {
-                    Some(parts[1].to_string())
+                    // Format as "public"."table" for consistency
+                    Some(format!("\"public\".\"{}\"", parts[1]))
                 } else {
                     None
                 }
@@ -295,10 +302,11 @@ mod tests {
         .unwrap();
 
         let tables = get_excluded_tables_for_db(&filter, "db1").unwrap();
-        assert_eq!(tables, vec!["table1", "table2"]);
+        // Should return schema-qualified names
+        assert_eq!(tables, vec!["\"public\".\"table1\"", "\"public\".\"table2\""]);
 
         let tables = get_excluded_tables_for_db(&filter, "db2").unwrap();
-        assert_eq!(tables, vec!["table3"]);
+        assert_eq!(tables, vec!["\"public\".\"table3\""]);
 
         let tables = get_excluded_tables_for_db(&filter, "db3");
         assert!(tables.is_none() || tables.unwrap().is_empty());
@@ -319,10 +327,11 @@ mod tests {
         .unwrap();
 
         let tables = get_included_tables_for_db(&filter, "db1").unwrap();
-        assert_eq!(tables, vec!["users", "orders"]);
+        // Should return schema-qualified names in original order
+        assert_eq!(tables, vec!["\"public\".\"users\"", "\"public\".\"orders\""]);
 
         let tables = get_included_tables_for_db(&filter, "db2").unwrap();
-        assert_eq!(tables, vec!["products"]);
+        assert_eq!(tables, vec!["\"public\".\"products\""]);
 
         let tables = get_included_tables_for_db(&filter, "db3");
         assert!(tables.is_none() || tables.unwrap().is_empty());
