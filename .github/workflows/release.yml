@@ -89,24 +89,25 @@ jobs:
 
           # Generate release notes
           cat > release-notes.md << 'EOF'
-          ## 🔧 Patch Release: v2.3.3
+          ## ✨ Feature Release: v2.4.0
 
-          This patch release fixes a critical bug where tables selected for time-based or predicate-based filtering were incorrectly excluded from schema dumps, causing "relation does not exist" errors during filtered copy operations.
+          This release adds interactive column selection for time-based filtering, significantly improving the user experience and preventing "column does not exist" errors.
 
-          ### 🐛 Bug Fixes
+          ### 🎯 New Features
 
-          **Fixed Filtered Tables Schema Exclusion (#117)**
-          - Tables with time filters or table filters now have their schema properly created on the target database
-          - Previously, these tables were excluded from both schema and data dumps
-          - Now correctly excludes them only from data dumps (schema is created, filtered data copied separately)
-          - Resolves "ERROR: relation does not exist" errors during filtered copy operations
+          **Interactive Column Selection for Time Filters (#118)**
+          - When configuring time-based filtering in interactive mode, the tool now shows actual table columns
+          - Displays timestamp columns (timestamp, timestamptz, date) with their data types
+          - Example: `series_time (timestamptz)`, `block_time (timestamptz)`
+          - Users select from a list instead of manually typing column names
+          - Includes fallback option to enter custom column names for edge cases
+          - Prevents typos and "column does not exist" errors during replication
 
           **Technical Details:**
-          - Split `get_excluded_tables_for_db` into two functions:
-            - `get_schema_excluded_tables_for_db`: Only excludes explicit exclude_tables
-            - `get_data_excluded_tables_for_db`: Excludes explicit, schema_only, and predicate tables
-          - Schema dumps now include tables that will be filtered during data copy
-          - Filtered copy operations can now successfully TRUNCATE and COPY predicate-filtered tables
+          - Added `get_table_columns()` function that queries `pg_catalog.pg_attribute` for table schema
+          - New `ColumnInfo` struct captures column name, data type, and timestamp flag
+          - Interactive mode now uses `Select` prompts instead of free-form text input for column selection
+          - Falls back to manual entry if no timestamp columns are detected
 
           ### Installation
 
@@ -125,9 +126,9 @@ jobs:
 
           ### Upgrade Recommendation
 
-          **Recommended upgrade** for users experiencing "relation does not exist" errors when using time-based or table filters. This fix is critical if you use `--time-filter` or `--table-filter` flags during `init` operations.
+          **Recommended upgrade** for users who use time-based filtering during replication. This enhancement makes it much easier to configure time filters correctly without needing to know column names in advance.
 
-          **Full Changelog**: https://github.com/serenorg/postgres-seren-replicator/compare/v2.3.2...${VERSION}
+          **Full Changelog**: https://github.com/serenorg/postgres-seren-replicator/compare/v2.3.3...${VERSION}
           EOF
 
           # Create release with all binaries
